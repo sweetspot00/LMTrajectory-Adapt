@@ -5,6 +5,8 @@ import random
 from tqdm import tqdm
 import re
 import argparse
+import ast
+from pathlib import Path
 
 import openai
 from utils.compact_json_encoder import CompactJSONEncoder
@@ -22,9 +24,11 @@ args = parser.parse_args()
 
 
 # API config
-OPENAI_API_KEY = ['sk-PASTE_YOUR_OPENAI_API_KEY_HERE000000000000000000'][0]
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 openai.api_key = OPENAI_API_KEY
-model = ['gpt-3.5-turbo-0301', 'gpt-4-0314', 'gpt-3.5-turbo-1106', 'gpt-4-1106-preview'][args.model]
+openai.api_base = os.getenv('OPENAI_API_BASE', 'https://aikey-gateway.ivia.ch/v1')
+
+model = ['gpt-3.5-turbo-0301', 'gpt-4-0314', 'gpt-3.5-turbo-1106', 'gpt-4-1106-preview', 'azure/gpt-4o'][args.model]
 temperature = 0.7
 free_trial = False  # free tier = True, paid tier = False
 
@@ -36,11 +40,13 @@ dataset = ['eth', 'hotel', 'univ', 'zara1', 'zara2'][args.dataset]
 scene_idx = args.scene_id
 obs_len = 8
 pred_len = 12
-dump_filename = './output_dump/{0}/{0}_chatgpt_api_dump_{1:04d}.json'.format(dataset, scene_idx)
+script_dir = Path(__file__).resolve().parent
+repo_root = script_dir.parent
+dump_filename = script_dir / 'output_dump' / dataset / f'{dataset}_chatgpt_api_dump_{scene_idx:04d}.json'
                 
 prompt_system = "You are a helpful assistant that Extrapolate the coordinate sequence data."
 # prompt_template_list = ["Forecast the next {1:d} (x, y) coordinates using the observed {0:d} (x, y) coordinate list.\nDirectly output the 5 different cases of the future {1:d} coordinate Python list without explanation.\nDo not repeat the same results.\n{2:s}",
-prompt_template_list = ["Forecast the next {1:d} (x, y) coordinates using the observed {0:d} (x, y) coordinate list.\nDirectly output the 5 different cases of the future {1:d} coordinate Python list without explanation.\nList must be in single line, without line split or numbering.\nDirectly output final lists with 12 x-y coordinates each without for loop or multiply operators.\n{2:s}",
+prompt_template_list = ["Forecast the next {1:d} (x, y) coordinates using the observed {0:d} (x, y) coordinate list.\nRespond with JSON only: a list of 5 items, each item is a list of {1:d} [x, y] pairs.\nNo words, no numbering, no newlines between lists.\nExample format: [[[x,y],...12 pairs...],[...[x,y]...],[...],[...],[...]]\n{2:s}",
                         "Give me 5 more results other than the above methods.",
                         "Give me 5 more results other than the above methods.",
                         "Give me 5 more results other than the above methods."]
@@ -50,19 +56,20 @@ scene_name_template = "scene_{:04d}"
 
 if __name__ == '__main__':
     # Make dump file directory
-    if not os.path.exists(os.path.dirname(dump_filename)):
+    dump_dir = dump_filename.parent
+    if not dump_dir.exists():
         try:
-            os.makedirs(os.path.dirname(dump_filename), exist_ok=True)
-        except:
-            if os.path.exists(os.path.dirname(dump_filename)):
+            dump_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            if dump_dir.exists():
                 print('Directory already exists.')
             else:
                 print('Error creating directory.')
                 exit(1)
 
     # Load the previous dump json file
-    if os.path.exists(dump_filename.format(dataset)):
-        with open(dump_filename.format(dataset), 'r') as f:
+    if dump_filename.exists():
+        with dump_filename.open('r') as f:
             output_dump = json.load(f)
     else:
         output_dump = {'dataset': dataset, 
@@ -73,7 +80,8 @@ if __name__ == '__main__':
                        'data': {}}
     
     # Load the test dataset
-    test_dataset = TrajectoryDataset('../datasets/{}/test/'.format(dataset), obs_len=obs_len, pred_len=pred_len, min_ped=0)
+    test_dataset_path = repo_root / 'datasets' / dataset / 'test'
+    test_dataset = TrajectoryDataset(str(test_dataset_path), obs_len=obs_len, pred_len=pred_len, min_ped=0)
     num_scenes = len(test_dataset)
     scene_name = scene_name_template.format(scene_idx)
 
@@ -156,19 +164,6 @@ if __name__ == '__main__':
                     progressbar.set_description('Rate limit reached, sleep for 20s')
                     time.sleep(random.random() * 20 + 20)
                     continue
-                elif (not (abs(obs_traj[ped_idx, 0] - obs_traj[ped_idx, -1]).sum() < 0.3
-                      or abs(obs_traj[ped_idx, 0] - obs_traj[ped_idx, 2]).sum() < 0.2
-                      or abs(obs_traj[ped_idx, -3] - obs_traj[ped_idx, -1]).sum() < 0.2) and '[' + coord_template.format(*obs_traj[ped_idx, 0]) in response):
-                    if prompt_idx == 0:
-                        timeout += 1
-                        error_code = 'Obs coordinates included'
-                        continue
-                elif ('[' + coord_template.format(*obs_traj[ped_idx, 0, ::-1]) in response
-                      or '(x4, y4)]' in response
-                      or ')]' not in response):
-                    timeout += 1
-                    error_code = 'Invalid response shape'
-                    continue
                 elif len(response) == 0:
                     timeout += 1
                     error_code = 'Empty response'
@@ -176,9 +171,17 @@ if __name__ == '__main__':
                 
                 # Convert to list, check validity
                 try:
-                    response_cleanup = re.sub('[^0-9()\[\],.\-\n]', '', response.replace(':', '\n')).replace('(', '[').replace(')', ']')
-                    response_cleanup = [eval(line) for line in response_cleanup.split('\n') if len(line) > 20 and line.startswith('[[') and line.endswith(']]')]
-                except:
+                    response_cleanup = re.sub('[^0-9()\[\],.\-\n ]', '', response.replace(':', '\n')).replace('(', '[').replace(')', ']')
+                    parsed = []
+                    for line in response_cleanup.split('\n'):
+                        line = line.strip()
+                        if len(line) > 20 and line.startswith('[[') and line.endswith(']]'):
+                            try:
+                                parsed.append(ast.literal_eval(line))
+                            except Exception:
+                                continue
+                    response_cleanup = parsed
+                except Exception:
                     timeout += 1
                     error_code = 'Response to list failed'
                     continue
@@ -215,7 +218,7 @@ if __name__ == '__main__':
                     'llm_processed': llm_processed_list}
     output_dump['data'][scene_name] = output_scene
 
-    with open(dump_filename.format(dataset), 'w') as f:
+    with dump_filename.open('w') as f:
         json.dump(output_dump, f, cls=CompactJSONEncoder, indent=2)
     progressbar.set_description('Chatbot finished! Scene_idx: {}'.format(scene_idx))
     progressbar.update(1)

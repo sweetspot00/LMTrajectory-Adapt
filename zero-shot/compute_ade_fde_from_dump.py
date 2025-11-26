@@ -3,6 +3,7 @@ import json
 import numpy as np
 from tqdm import tqdm
 import argparse
+from pathlib import Path
 
 
 parser = argparse.ArgumentParser()
@@ -12,16 +13,17 @@ args = parser.parse_args()
 
 # Data config
 dataset = ['eth', 'hotel', 'univ', 'zara1', 'zara2'][args.dataset]
-model = ['gpt-3.5-turbo-0301', 'gpt-4-0314', 'gpt-3.5-turbo-1106', 'gpt-4-1106-preview'][args.model]
+model = ['gpt-3.5-turbo-0301', 'gpt-4-0314', 'gpt-3.5-turbo-1106', 'gpt-4-1106-preview', 'azure/gpt-4.1'][args.model]
 obs_len = 8
 pred_len = 12
-dump_file = './zero-shot/output_dump/{m}/{d}_chatgpt_api_dump.json'
+script_dir = Path(__file__).resolve().parent
+dump_file = script_dir / 'output_dump' / model / f'{dataset}_chatgpt_api_dump.json'
 
 
 if __name__ == '__main__':
     # Load the previous dump json file
-    if os.path.exists(dump_file.format(m=model, d=dataset)):
-        with open(dump_file.format(m=model, d=dataset), 'r') as f:
+    if dump_file.exists():
+        with dump_file.open('r') as f:
             output_dump = json.load(f)
     else:
         print("Dump file not found")

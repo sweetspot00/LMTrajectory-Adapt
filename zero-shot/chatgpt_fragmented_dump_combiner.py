@@ -2,6 +2,7 @@ import json
 import glob
 from tqdm import tqdm
 import argparse
+from pathlib import Path
 
 from utils.compact_json_encoder import CompactJSONEncoder
 
@@ -12,11 +13,12 @@ args = parser.parse_args()
 
 # Data config
 dataset = ['eth', 'hotel', 'univ', 'zara1', 'zara2'][args.dataset]
-model = ['gpt-3.5-turbo-0301', 'gpt-4-0314', 'gpt-3.5-turbo-1106', 'gpt-4-1106-preview'][args.model]
+model = ['gpt-3.5-turbo-0301', 'gpt-4-0314', 'gpt-3.5-turbo-1106', 'gpt-4-1106-preview', 'azure/gpt-4.1'][args.model]
 obs_len = 8
 pred_len = 12
-dump_filename_fragment = './zero-shot/output_dump/{0}/{0}*.json'.format(dataset)
-dump_filename_output = './zero-shot/output_dump/{}/{}_chatgpt_api_dump.json'.format(model, dataset)
+script_dir = Path(__file__).resolve().parent
+dump_filename_fragment = str((script_dir / 'output_dump' / dataset / f'{dataset}*.json'))
+dump_filename_output = script_dir / 'output_dump' / model / f'{dataset}_chatgpt_api_dump.json'
 
 
 if __name__ == '__main__':
@@ -66,7 +68,8 @@ if __name__ == '__main__':
                 print('Bug found in dmup file {} scene_id {} log {}'.format(dump_file, scene_id, is_there_bug))
 
     # save the output
-    with open(dump_filename_output, 'w') as f:
+    dump_filename_output.parent.mkdir(parents=True, exist_ok=True)
+    with dump_filename_output.open('w') as f:
         json.dump(gathered_data, f, cls=CompactJSONEncoder, indent=2)
         # json.dump(gathered_data, f, indent=2)
 

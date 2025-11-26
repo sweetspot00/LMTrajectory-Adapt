@@ -1,0 +1,22 @@
+{
+  "dataset": "eth",
+  "llm_model": "azure/gpt-4o",
+  "prompt_template": ["Forecast the next {1:d} (x, y) coordinates using the observed {0:d} (x, y) coordinate list.\nDirectly output the 5 different cases of the future {1:d} coordinate Python list without explanation.\nList must be in single line, without line split or numbering.\nDirectly output final lists with 12 x-y coordinates each without for loop or multiply operators.\n{2:s}", "Give me 5 more results other than the above methods.", "Give me 5 more results other than the above methods.", "Give me 5 more results other than the above methods."],
+  "obs_len": 8,
+  "pred_len": 12,
+  "data": {
+    "scene_0000": {
+      "id": 0,
+      "num_ped": 1,
+      "obs_traj": [
+        [[13.64, 5.8], [12.09, 5.75], [11.37, 5.8], [10.31, 5.97], [9.57, 6.24], [8.73, 6.34], [7.94, 6.5], [7.17, 6.62]]
+      ],
+      "pred_traj": [
+        [[6.47, 6.68], [5.86, 6.82], [5.24, 6.98], [4.87, 7.16], [4.51, 7.58], [4.2, 7.3], [3.95, 7.71], [3.47, 7.86], [2.82, 8], [2.01, 8], [1.28, 7.82], [0.54, 7.4]]
+      ],
+      "non_linear_ped": [1],
+      "llm_output": [["", "", "", ""]],
+      "llm_processed": [[]]
+    }
+  }
+}

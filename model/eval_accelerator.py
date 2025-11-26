@@ -78,7 +78,12 @@ def test(cfg):
     config = AutoConfig.from_pretrained(checkpoint_path, trust_remote_code=False, cache_dir=cfg.cache_dir)
     tokenizer = AutoTokenizer.from_pretrained(checkpoint_path, trust_remote_code=False, cache_dir=cfg.cache_dir, use_fast=not cfg.use_slow_tokenizer)
     model = AutoModelForSeq2SeqLM.from_pretrained(checkpoint_path, config=config, trust_remote_code=False, cache_dir=cfg.cache_dir)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
     model.to(device)
     
     if accelerator.is_local_main_process:
@@ -198,6 +203,18 @@ def test(cfg):
         print(f"Total pedestrian number: {all_preds.shape[0]}")
         print(f"ADE: {np.mean(ADE)}")
         print(f"FDE: {np.mean(FDE)}")
+
+        # Save outputs for downstream visualization/analysis
+        output_npz = os.path.join(checkpoint_path, f"{cfg.dataset_name}_eval_outputs.npz")
+        np.savez_compressed(
+            output_npz,
+            obs_traj=obs_traj,
+            gt_traj=pred_traj,
+            preds=all_preds,
+            scene_id=scene_id,
+            seq_start_end=seq_start_end,
+        )
+        print(f"Saved predictions to {output_npz}")
         
         
 if __name__ == "__main__":

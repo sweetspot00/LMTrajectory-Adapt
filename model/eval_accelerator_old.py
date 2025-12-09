@@ -41,7 +41,25 @@ def test(cfg):
         set_seed(cfg.seed)
 
     # Get the datasets
-    dataloader = get_dataloader(os.path.join(cfg.dataset_path, cfg.dataset_name), 'test', cfg.obs_len, cfg.pred_len, batch_size=1e8)
+    loader_kwargs = {
+        "trajectory_dir": getattr(cfg, "trajectory_dir", None),
+        "image_dir": getattr(cfg, "image_dir", None),
+        "homography_dir": getattr(cfg, "homography_dir", None),
+        "caption_dir": getattr(cfg, "caption_dir", None),
+        "caption_suffix": getattr(cfg, "caption_suffix", None),
+        "strip_scene_tokens": getattr(cfg, "strip_scene_tokens", None),
+        "reference_image_suffix": getattr(cfg, "reference_image_suffix", None),
+        "oracle_image_suffix": getattr(cfg, "oracle_image_suffix", None),
+    }
+    loader_kwargs = {k: v for k, v in loader_kwargs.items() if v is not None}
+    dataloader = get_dataloader(
+        os.path.join(cfg.dataset_path, cfg.dataset_name),
+        'test',
+        cfg.obs_len,
+        cfg.pred_len,
+        batch_size=1e8,
+        **loader_kwargs,
+    )
     obs_traj = dataloader.dataset.obs_traj.numpy()
     pred_traj = dataloader.dataset.pred_traj.numpy()
     non_linear_ped = dataloader.dataset.non_linear_ped.numpy()

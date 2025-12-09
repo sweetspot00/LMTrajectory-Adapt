@@ -2,6 +2,7 @@ import os
 import math
 import torch
 import numpy as np
+from pathlib import Path
 from torch.utils.data import Dataset
 from torch.utils.data.sampler import Sampler
 from torch.utils.data.dataloader import DataLoader
@@ -12,7 +13,21 @@ except ImportError:
 from PIL import Image
 
 
-def get_dataloader(data_dir, phase, obs_len, pred_len, batch_size):
+def get_dataloader(
+    data_dir,
+    phase,
+    obs_len,
+    pred_len,
+    batch_size,
+    trajectory_dir=None,
+    image_dir=None,
+    homography_dir=None,
+    caption_dir=None,
+    caption_suffix=None,
+    strip_scene_tokens=None,
+    reference_image_suffix=None,
+    oracle_image_suffix=None,
+):
     r"""Get dataloader for a specific phase
 
     Args:
@@ -28,11 +43,24 @@ def get_dataloader(data_dir, phase, obs_len, pred_len, batch_size):
 
     assert phase in ['train', 'val', 'test']
 
-    data_set = data_dir + '/' + phase + '/'
+    base_dir = Path(data_dir)
+    data_set = Path(trajectory_dir) if trajectory_dir is not None else base_dir / phase
     shuffle = True if phase == 'train' else False
     drop_last = True if phase == 'train' else False
 
-    dataset_phase = TrajectoryDataset(data_set, obs_len=obs_len, pred_len=pred_len)
+    dataset_phase = TrajectoryDataset(
+        data_set,
+        obs_len=obs_len,
+        pred_len=pred_len,
+        image_dir=image_dir,
+        homography_dir=homography_dir,
+        caption_dir=caption_dir,
+        caption_suffix=caption_suffix,
+        strip_scene_tokens=strip_scene_tokens,
+        reference_image_suffix=reference_image_suffix,
+        oracle_image_suffix=oracle_image_suffix,
+        base_dir=base_dir,
+    )
     sampler_phase = None
     if batch_size > 1:
         sampler_phase = TrajBatchSampler(dataset_phase, batch_size=batch_size, shuffle=shuffle, drop_last=drop_last)
@@ -169,7 +197,24 @@ def poly_fit(traj, traj_len, threshold):
 class TrajectoryDataset(Dataset):
     """Dataloder for the Trajectory datasets"""
 
-    def __init__(self, data_dir, obs_len=8, pred_len=12, skip=1, threshold=0.02, min_ped=1, delim='\t'):
+    def __init__(
+        self,
+        data_dir,
+        obs_len=8,
+        pred_len=12,
+        skip=1,
+        threshold=0.02,
+        min_ped=1,
+        delim='\t',
+        image_dir=None,
+        homography_dir=None,
+        caption_dir=None,
+        caption_suffix=None,
+        strip_scene_tokens=None,
+        reference_image_suffix=None,
+        oracle_image_suffix=None,
+        base_dir=None,
+    ):
         """
         Args:
         - data_dir: Directory containing dataset files in the format <frame_id> <ped_id> <x> <y>
@@ -182,15 +227,27 @@ class TrajectoryDataset(Dataset):
         """
         super(TrajectoryDataset, self).__init__()
 
-        self.data_dir = data_dir
+        self.data_dir = Path(data_dir)
         self.obs_len = obs_len
         self.pred_len = pred_len
         self.skip = skip
         self.seq_len = self.obs_len + self.pred_len
         self.delim = delim
+        self.base_dir = Path(base_dir) if base_dir is not None else self.data_dir.resolve().parent
+
+        self.scene_img_map = {'biwi_eth': 'seq_eth', 'biwi_hotel': 'seq_hotel',
+                         'students001': 'students003', 'students003': 'students003', 'uni_examples': 'students003',
+                         'crowds_zara01': 'crowds_zara01', 'crowds_zara02': 'crowds_zara02', 'crowds_zara03': 'crowds_zara02'}
+        self.image_dir = Path(image_dir) if image_dir is not None else (self.base_dir / "image")
+        self.caption_dir = Path(caption_dir) if caption_dir is not None else self.image_dir
+        self.homography_dir = Path(homography_dir) if homography_dir is not None else (self.base_dir / "homography")
+        self.caption_suffix = caption_suffix if caption_suffix is not None else "_caption.txt"
+        self.reference_image_suffix = reference_image_suffix if reference_image_suffix is not None else "_reference.png"
+        self.oracle_image_suffix = oracle_image_suffix if oracle_image_suffix is not None else "_oracle.png"
+        self.strip_scene_tokens = list(strip_scene_tokens) if strip_scene_tokens is not None else []
 
         all_files = sorted(os.listdir(self.data_dir))
-        all_files = [os.path.join(self.data_dir, _path) for _path in all_files]
+        all_files = [self.data_dir / _path for _path in all_files]
         num_peds_in_seq = []
         seq_list = []
         loss_mask_list = []
@@ -201,36 +258,39 @@ class TrajectoryDataset(Dataset):
         self.scene_img = {}
         self.scene_map = {}
         self.scene_desc = {}
-        scene_img_map = {'biwi_eth': 'seq_eth', 'biwi_hotel': 'seq_hotel',
-                         'students001': 'students003', 'students003': 'students003', 'uni_examples': 'students003',
-                         'crowds_zara01': 'crowds_zara01', 'crowds_zara02': 'crowds_zara02', 'crowds_zara03': 'crowds_zara02'}
+        scene_img_map = self.scene_img_map
 
         for path in all_files:
             # Load image
-            parent_dir, scene_name = os.path.split(path)
-            parent_dir, phase = os.path.split(parent_dir)
-            parent_dir, dataset_name = os.path.split(parent_dir)
-            scene_name, _ = os.path.splitext(scene_name)
-            scene_name = scene_name.replace('_' + phase, '')
+            parent_dir = Path(path).parent
+            scene_name = Path(path).stem
+            phase = parent_dir.name
+            dataset_name = parent_dir.parent.name
+            tokens_to_strip = list(self.strip_scene_tokens)
+            if phase:
+                phase_token = f"_{phase}"
+                if phase_token not in tokens_to_strip:
+                    tokens_to_strip.append(phase_token)
+            for token in tokens_to_strip:
+                scene_name = scene_name.replace(token, '')
 
-            try:
-                self.scene_img[scene_name] = Image.open(os.path.join(parent_dir, "image", scene_img_map[scene_name] + "_reference.png"))
-                self.scene_map[scene_name] = np.array(Image.open(os.path.join(parent_dir, "image", scene_img_map[scene_name] + "_oracle.png")))
+            img_key = scene_img_map.get(scene_name, scene_name)
 
-                # check caption file exist
-                if os.path.exists(os.path.join(parent_dir, "image", scene_img_map[scene_name] + "_caption.txt")):
-                    with open(os.path.join(parent_dir, "image", scene_img_map[scene_name] + "_caption.txt"), "r") as f:
-                        self.scene_desc[scene_name] = f.read()
-                else:
-                    self.scene_desc[scene_name] = ""
-            except:
-                self.scene_img[scene_name] = None
-                self.scene_map[scene_name] = None
+            ref_img_path = self.image_dir / f"{img_key}{self.reference_image_suffix}"
+            oracle_img_path = self.image_dir / f"{img_key}{self.oracle_image_suffix}"
+            self.scene_img[scene_name] = Image.open(ref_img_path) if ref_img_path.exists() else None
+            self.scene_map[scene_name] = np.array(Image.open(oracle_img_path)) if oracle_img_path.exists() else None
+
+            caption_path = self.caption_dir / f"{img_key}{self.caption_suffix}"
+            if caption_path.exists():
+                with caption_path.open("r") as f:
+                    self.scene_desc[scene_name] = f.read()
+            else:
                 self.scene_desc[scene_name] = ""
 
             # Load homography matrix
-            if dataset_name in ["eth", "hotel", "univ", "zara1", "zara2", "rawall"]:
-                homography_file = os.path.join(parent_dir, "homography", scene_name + "_H.txt")
+            homography_file = self.homography_dir / f"{scene_name}_H.txt"
+            if homography_file.exists():
                 self.homography[scene_name] = np.loadtxt(homography_file)
 
             # Load data

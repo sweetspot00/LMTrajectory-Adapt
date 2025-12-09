@@ -2,6 +2,7 @@ import os
 import json
 import copy
 import argparse
+from pathlib import Path
 import numpy as np
 from tqdm import tqdm
 from dataloader import get_dataloader
@@ -111,18 +112,44 @@ def get_mimicry_id(obs_traj, pred_traj):
 def preprocess_dataset(dataset, phase, obs_len, pred_len, coord_system="meter", use_scene_context=True, 
                        multimodal=["forecast", "destination", "direction", "group", "collision", "mimicry"], 
                        augment=["shuffle", "shift", "flip", "swap", "reverse"],
-                       postfix="-multimodal"):
-    data_dir = f"./datasets/{dataset}"
-    dst_file = f"./datasets/preprocessed/{dataset}-{phase}-{obs_len}-{pred_len}-{coord_system}{postfix}.json"
+                       postfix="-multimodal",
+                       data_dir=None,
+                       steps_dir=None,
+                       image_dir=None,
+                       caption_dir=None,
+                       homography_dir=None,
+                       caption_suffix=None,
+                       strip_scene_tokens=None,
+                       reference_suffix=None,
+                       oracle_suffix=None,
+                       output_dir=None,
+                       split_by_scene=False):
+    data_dir = Path(data_dir) if data_dir is not None else Path(f"./datasets/{dataset}")
+    dst_root = Path(output_dir) if output_dir is not None else Path("./datasets/preprocessed/")
+    dst_file = dst_root / f"{dataset}-{phase}-{obs_len}-{pred_len}-{coord_system}{postfix}.json"
    
     if phase != "train":
         augment = []
 
-    os.makedirs("./datasets/preprocessed/", exist_ok=True)
+    dst_root.mkdir(parents=True, exist_ok=True)
 
     reproducibility_settings()
     
-    dataloader = get_dataloader(data_dir, phase, obs_len, pred_len, batch_size=1)
+    dataloader = get_dataloader(
+        str(data_dir),
+        phase,
+        obs_len,
+        pred_len,
+        batch_size=1,
+        trajectory_dir=steps_dir,
+        image_dir=image_dir,
+        caption_dir=caption_dir,
+        homography_dir=homography_dir,
+        caption_suffix=caption_suffix,
+        strip_scene_tokens=strip_scene_tokens,
+        reference_image_suffix=reference_suffix,
+        oracle_image_suffix=oracle_suffix,
+    )
     
     homography = dataloader.dataset.homography
     scene_img = dataloader.dataset.scene_img
@@ -363,36 +390,84 @@ def preprocess_dataset(dataset, phase, obs_len, pred_len, coord_system="meter", 
     for m in multimodal:
         processed_data_cat += processed_data[m]
 
-    with open(dst_file, encoding= "utf-8",mode="w") as file: 
-        for i in tqdm(processed_data_cat, desc=f"Writing {dataset} {phase} dataset..."):
-            file.write(json.dumps(round_floats(i)) + "\n")
+    # Optionally split outputs per scene
+    if split_by_scene:
+        by_scene = {}
+        for entry in processed_data_cat:
+            scene_key = entry.get("scene", "unknown")
+            by_scene.setdefault(scene_key, []).append(entry)
+
+        for scene_key, items in by_scene.items():
+            scene_dst = dst_root / f"{scene_key}-{phase}-{obs_len}-{pred_len}-{coord_system}{postfix}.json"
+            with scene_dst.open(encoding="utf-8", mode="w") as file:
+                for i in tqdm(items, desc=f"Writing {scene_key} {phase} dataset..."):
+                    file.write(json.dumps(round_floats(i)) + "\n")
+    else:
+        with dst_file.open(encoding="utf-8", mode="w") as file:
+            for i in tqdm(processed_data_cat, desc=f"Writing {dataset} {phase} dataset..."):
+                file.write(json.dumps(round_floats(i)) + "\n")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', default="eth", type=str, help="dataset name")
     parser.add_argument('--phase', default="train", type=str, help="training phase")
+    parser.add_argument('--data-dir', default=None, type=str, help="Base directory for the dataset (defaults to ./datasets/<dataset>).")
+    parser.add_argument('--steps-dir', default=None, type=str, help="Directory containing trajectory txt files (overrides <data-dir>/<phase>).")
+    parser.add_argument('--image-dir', default=None, type=str, help="Directory containing scene images.")
+    parser.add_argument('--caption-dir', default=None, type=str, help="Directory containing captions (defaults to image-dir).")
+    parser.add_argument('--homography-dir', default=None, type=str, help="Directory containing homography matrices.")
+    parser.add_argument('--caption-suffix', default=None, type=str, help="Caption filename suffix (e.g., _caption_chatgpt4.txt).")
+    parser.add_argument('--strip-token', action='append', default=None, help="Suffix/pattern to strip from scene names when matching assets. Can be provided multiple times.")
+    parser.add_argument('--reference-suffix', default=None, type=str, help="Reference scene image suffix (default: _reference.png).")
+    parser.add_argument('--oracle-suffix', default=None, type=str, help="Oracle/segmentation image suffix (default: _oracle.png).")
+    parser.add_argument('--obs-len', default=8, type=int, help="Observed trajectory length.")
+    parser.add_argument('--pred-len', default=12, type=int, help="Prediction trajectory length.")
+    parser.add_argument('--output-dir', default=None, type=str, help="Destination directory for preprocessed JSON files (default: ./datasets/preprocessed/).")
+    parser.add_argument('--split-by-scene', action='store_true', help="If set, write one preprocessed file per scene.")
     args = parser.parse_args()
     
-    dataset = ["eth", "hotel", "univ", "zara1", "zara2"]
-    phase = ["train", "val", "test"]
-    assert args.dataset in dataset
-    assert args.phase in phase
-    dataset = [args.dataset]
-    phase = [args.phase]
+    phase_options = ["train", "val", "test"]
+    assert args.phase in phase_options
+    datasets = [args.dataset]
+    phases = [args.phase]
     
-    obs_len = 8
-    pred_len = 12
+    obs_len = args.obs_len
+    pred_len = args.pred_len
 
-    for d in dataset:
-        for p in phase:
+    for d in datasets:
+        for p in phases:
             print(f"Processing {d} {p} dataset...")
-            preprocess_dataset(d, p, obs_len, pred_len, coord_system="meter", postfix="-multimodal")
-            preprocess_dataset(d, p, obs_len, pred_len, coord_system="meter", multimodal=["forecast"], postfix="")
-            preprocess_dataset(d, p, obs_len, pred_len, coord_system="meter", use_scene_context=False, postfix="-multimodal-nocontext")
-            preprocess_dataset(d, p, obs_len, pred_len, coord_system="meter", multimodal=["forecast"], use_scene_context=False, postfix="-nocontext")
+            preprocess_dataset(d, p, obs_len, pred_len, coord_system="meter", postfix="-multimodal",
+                               data_dir=args.data_dir, steps_dir=args.steps_dir, image_dir=args.image_dir, caption_dir=args.caption_dir, homography_dir=args.homography_dir,
+                               caption_suffix=args.caption_suffix, strip_scene_tokens=args.strip_token, reference_suffix=args.reference_suffix, oracle_suffix=args.oracle_suffix,
+                               output_dir=args.output_dir, split_by_scene=args.split_by_scene)
+            preprocess_dataset(d, p, obs_len, pred_len, coord_system="meter", multimodal=["forecast"], postfix="",
+                               data_dir=args.data_dir, steps_dir=args.steps_dir, image_dir=args.image_dir, caption_dir=args.caption_dir, homography_dir=args.homography_dir,
+                               caption_suffix=args.caption_suffix, strip_scene_tokens=args.strip_token, reference_suffix=args.reference_suffix, oracle_suffix=args.oracle_suffix,
+                               output_dir=args.output_dir, split_by_scene=args.split_by_scene)
+            preprocess_dataset(d, p, obs_len, pred_len, coord_system="meter", use_scene_context=False, postfix="-multimodal-nocontext",
+                               data_dir=args.data_dir, steps_dir=args.steps_dir, image_dir=args.image_dir, caption_dir=args.caption_dir, homography_dir=args.homography_dir,
+                               caption_suffix=args.caption_suffix, strip_scene_tokens=args.strip_token, reference_suffix=args.reference_suffix, oracle_suffix=args.oracle_suffix,
+                               output_dir=args.output_dir, split_by_scene=args.split_by_scene)
+            preprocess_dataset(d, p, obs_len, pred_len, coord_system="meter", multimodal=["forecast"], use_scene_context=False, postfix="-nocontext",
+                               data_dir=args.data_dir, steps_dir=args.steps_dir, image_dir=args.image_dir, caption_dir=args.caption_dir, homography_dir=args.homography_dir,
+                               caption_suffix=args.caption_suffix, strip_scene_tokens=args.strip_token, reference_suffix=args.reference_suffix, oracle_suffix=args.oracle_suffix,
+                               output_dir=args.output_dir, split_by_scene=args.split_by_scene)
             
-            preprocess_dataset(d, p, obs_len, pred_len, coord_system="pixel", postfix="-multimodal")
-            preprocess_dataset(d, p, obs_len, pred_len, coord_system="pixel", multimodal=["forecast"], postfix="")
-            preprocess_dataset(d, p, obs_len, pred_len, coord_system="pixel", use_scene_context=False, postfix="-multimodal-nocontext")
-            preprocess_dataset(d, p, obs_len, pred_len, coord_system="pixel", multimodal=["forecast"], use_scene_context=False, postfix="-nocontext")
+            preprocess_dataset(d, p, obs_len, pred_len, coord_system="pixel", postfix="-multimodal",
+                               data_dir=args.data_dir, steps_dir=args.steps_dir, image_dir=args.image_dir, caption_dir=args.caption_dir, homography_dir=args.homography_dir,
+                               caption_suffix=args.caption_suffix, strip_scene_tokens=args.strip_token, reference_suffix=args.reference_suffix, oracle_suffix=args.oracle_suffix,
+                               output_dir=args.output_dir, split_by_scene=args.split_by_scene)
+            preprocess_dataset(d, p, obs_len, pred_len, coord_system="pixel", multimodal=["forecast"], postfix="",
+                               data_dir=args.data_dir, steps_dir=args.steps_dir, image_dir=args.image_dir, caption_dir=args.caption_dir, homography_dir=args.homography_dir,
+                               caption_suffix=args.caption_suffix, strip_scene_tokens=args.strip_token, reference_suffix=args.reference_suffix, oracle_suffix=args.oracle_suffix,
+                               output_dir=args.output_dir, split_by_scene=args.split_by_scene)
+            preprocess_dataset(d, p, obs_len, pred_len, coord_system="pixel", use_scene_context=False, postfix="-multimodal-nocontext",
+                               data_dir=args.data_dir, steps_dir=args.steps_dir, image_dir=args.image_dir, caption_dir=args.caption_dir, homography_dir=args.homography_dir,
+                               caption_suffix=args.caption_suffix, strip_scene_tokens=args.strip_token, reference_suffix=args.reference_suffix, oracle_suffix=args.oracle_suffix,
+                               output_dir=args.output_dir, split_by_scene=args.split_by_scene)
+            preprocess_dataset(d, p, obs_len, pred_len, coord_system="pixel", multimodal=["forecast"], use_scene_context=False, postfix="-nocontext",
+                               data_dir=args.data_dir, steps_dir=args.steps_dir, image_dir=args.image_dir, caption_dir=args.caption_dir, homography_dir=args.homography_dir,
+                               caption_suffix=args.caption_suffix, strip_scene_tokens=args.strip_token, reference_suffix=args.reference_suffix, oracle_suffix=args.oracle_suffix,
+                               output_dir=args.output_dir, split_by_scene=args.split_by_scene)

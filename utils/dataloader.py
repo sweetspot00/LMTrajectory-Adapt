@@ -5,7 +5,10 @@ import numpy as np
 from torch.utils.data import Dataset
 from torch.utils.data.sampler import Sampler
 from torch.utils.data.dataloader import DataLoader
-from .homography import generate_homography
+try:
+    from .homography import generate_homography
+except ImportError:
+    from homography import generate_homography
 from PIL import Image
 
 

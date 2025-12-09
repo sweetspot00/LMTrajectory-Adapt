@@ -1,0 +1,1 @@
+A simple white maze on a green background.

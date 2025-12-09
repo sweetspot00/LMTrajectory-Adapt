@@ -154,7 +154,7 @@ def poly_fit(traj, traj_len, threshold):
 class TrajectoryDataset:
     """Dataloder for the Trajectory datasets"""
 
-    def __init__(self, data_dir, obs_len=8, pred_len=12, skip=1, threshold=0.02, min_ped=1, delim='\t'):
+    def __init__(self, data_dir, obs_len=8, pred_len=12, skip=1, threshold=0.02, min_ped=1, delim='\t', file_paths=None):
         """
         Args:
         - data_dir: Directory containing dataset files in the format <frame_id> <ped_id> <x> <y>
@@ -164,6 +164,7 @@ class TrajectoryDataset:
         - threshold: Minimum error to be considered for non-linear traj when using a linear predictor
         - min_ped: Minimum number of pedestrians that should be in a sequence
         - delim: Delimiter in the dataset files
+        - file_paths: Optional list of specific trajectory files to load instead of scanning the directory
         """
 
         self.data_dir = data_dir
@@ -173,8 +174,11 @@ class TrajectoryDataset:
         self.seq_len = self.obs_len + self.pred_len
         self.delim = delim
 
-        all_files = os.listdir(self.data_dir)
-        all_files = [os.path.join(self.data_dir, _path) for _path in all_files]
+        if file_paths is not None:
+            all_files = [str(p) for p in file_paths]
+        else:
+            all_files = os.listdir(self.data_dir)
+            all_files = [os.path.join(self.data_dir, _path) for _path in all_files]
         num_peds_in_seq = []
         seq_list = []
         loss_mask_list = []
@@ -217,6 +221,16 @@ class TrajectoryDataset:
                     seq_list.append(curr_seq[:num_peds_considered])
 
         self.num_seq = len(seq_list)
+        if self.num_seq == 0:
+            # Empty dataset: set empty arrays/tensors to avoid downstream crashes
+            self.num_peds_in_seq = np.array([])
+            self.obs_traj = np.zeros((0, self.obs_len, 2))
+            self.pred_traj = np.zeros((0, self.pred_len, 2))
+            self.loss_mask = np.zeros((0, self.seq_len))
+            self.non_linear_ped = np.array([])
+            self.seq_start_end = []
+            return
+
         seq_list = np.concatenate(seq_list, axis=0)
         loss_mask_list = np.concatenate(loss_mask_list, axis=0)
         non_linear_ped = np.asarray(non_linear_ped)

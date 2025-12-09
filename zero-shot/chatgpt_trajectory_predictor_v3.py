@@ -17,7 +17,9 @@ from utils.trajectory_dataset import TrajectoryDataset
 # https://platform.openai.com/docs/guides/rate-limits/overview
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--dataset', default=1, type=int, help="dataset id")
+parser.add_argument('--dataset', default=1, type=int, help="dataset id (ignored if --data-dir is set)")
+parser.add_argument('--data-dir', type=str, default=None, help="Custom data directory containing trajectory txt files")
+parser.add_argument('--dataset-name', type=str, default=None, help="Optional name to tag outputs when using --data-dir")
 parser.add_argument('--model', default=0, type=int, help="model id")
 parser.add_argument('--scene_id', default=0, type=int, help="scene id for processing")
 args = parser.parse_args()
@@ -35,8 +37,14 @@ free_trial = False  # free tier = True, paid tier = False
 # chatbot config
 max_timeout = 20
 
-# Data config
-dataset = ['eth', 'hotel', 'univ', 'zara1', 'zara2'][args.dataset]
+# Data configå
+if args.data_dir is not None:
+    test_dataset_path = Path(args.data_dir)
+    dataset = args.dataset_name or test_dataset_path.name
+else:
+    dataset = ['eth', 'hotel', 'univ', 'zara1', 'zara2'][args.dataset]
+    test_dataset_path = Path('datasets') / dataset / 'test'
+
 scene_idx = args.scene_id
 obs_len = 8
 pred_len = 12
@@ -80,7 +88,8 @@ if __name__ == '__main__':
                        'data': {}}
     
     # Load the test dataset
-    test_dataset_path = repo_root / 'datasets' / dataset / 'test'
+    if not test_dataset_path.is_absolute():
+        test_dataset_path = (repo_root / test_dataset_path).resolve()
     test_dataset = TrajectoryDataset(str(test_dataset_path), obs_len=obs_len, pred_len=pred_len, min_ped=0)
     num_scenes = len(test_dataset)
     scene_name = scene_name_template.format(scene_idx)

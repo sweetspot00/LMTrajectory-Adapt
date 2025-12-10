@@ -15,6 +15,7 @@ if __name__ == '__main__':
     parser.add_argument('--strip-token', action='append', default=None, help="Suffix/pattern to strip from scene names when matching assets. Can be used multiple times.")
     parser.add_argument('--reference-suffix', default=None, type=str, help="Reference scene image suffix (default: _reference.png).")
     parser.add_argument('--oracle-suffix', default=None, type=str, help="Oracle/segmentation image suffix (default: _oracle.png).")
+    parser.add_argument('--preprocessed-dir', default=None, type=str, help="Override directory for preprocessed JSON files.")
 
     args = parser.parse_args()
 
@@ -36,6 +37,7 @@ if __name__ == '__main__':
     cfg.strip_scene_tokens = args.strip_token or getattr(cfg, "strip_scene_tokens", None)
     cfg.reference_image_suffix = args.reference_suffix or getattr(cfg, "reference_image_suffix", None)
     cfg.oracle_image_suffix = args.oracle_suffix or getattr(cfg, "oracle_image_suffix", None)
+    cfg.preprocessed_dir = args.preprocessed_dir or getattr(cfg, "preprocessed_dir", None)
 
     if not args.test:
         # Training phase

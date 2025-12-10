@@ -84,6 +84,7 @@ def parse_args():
     # Dataset config
     parser.add_argument("--dataset_path", type=str, default="./datasets/", help="Path to the dataset.")
     parser.add_argument("--dataset_name", type=str, default=None, help="The name of the dataset to use.")
+    parser.add_argument("--preprocessed_dir", type=str, default=None, help="Override directory for preprocessed JSON files.")
     parser.add_argument("--trajectory_dir", type=str, default=None, help="Optional override for trajectory txt directory.")
     parser.add_argument("--image_dir", type=str, default=None, help="Optional override for scene image directory.")
     parser.add_argument("--caption_dir", type=str, default=None, help="Optional override for caption directory.")

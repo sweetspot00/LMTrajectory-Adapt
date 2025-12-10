@@ -1,4 +1,5 @@
 import os
+import glob
 import torch
 from tqdm import tqdm
 import numpy as np
@@ -80,15 +81,29 @@ def test(cfg):
         homography[k] = v.copy() @ generate_homography(scale=cfg.image_scale_down)
 
     preprocessed_test_dataset_name = f"{cfg.dataset_name}-test-{cfg.obs_len}-{cfg.pred_len}-{cfg.metric}.json"
-    preprocessed_dataset_path = os.path.join(cfg.dataset_path, "preprocessed")
+    preprocessed_dataset_path = getattr(cfg, "preprocessed_dir", None) or os.path.join(cfg.dataset_path, "preprocessed")
 
     data_files = {}
-    data_files["test"] = os.path.join(preprocessed_dataset_path, preprocessed_test_dataset_name)
+    expected_path = os.path.join(preprocessed_dataset_path, preprocessed_test_dataset_name)
+    if os.path.exists(expected_path):
+        data_files["test"] = expected_path
+    else:
+        pattern_dataset = os.path.join(preprocessed_dataset_path, f"{cfg.dataset_name}-test-{cfg.obs_len}-{cfg.pred_len}-{cfg.metric}*.json")
+        pattern_scene = os.path.join(preprocessed_dataset_path, f"*-test-{cfg.obs_len}-{cfg.pred_len}-{cfg.metric}*.json")
+        candidates = sorted(glob.glob(pattern_dataset))
+        if not candidates:
+            candidates = sorted(glob.glob(pattern_scene))
+        if not candidates:
+            raise ValueError(
+                "Preprocessed test dataset not found. Looked for "
+                f"'{expected_path}' or patterns '{pattern_dataset}' / '{pattern_scene}'. "
+                "Please run utils/preprocessor.py or set --preprocessed-dir correctly."
+            )
+        data_files["test"] = candidates
 
-    if not os.path.exists(data_files["test"]):
-        raise ValueError(f"Preprocessed dataset files not found: {data_files['train']} or {data_files['validation']}. Please run `./script/preprocessor.sh` first.")
-
-    extension = data_files["test"].split(".")[-1]
+    test_files = data_files["test"]
+    sample_path = test_files[0] if isinstance(test_files, list) else test_files
+    extension = sample_path.split(".")[-1]
     raw_datasets = load_dataset(extension, data_files=data_files, cache_dir=cfg.cache_dir)
 
     # Load the model
